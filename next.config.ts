@@ -1,7 +1,12 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  /* config options here */
-};
+  serverExternalPackages: [
+    'pino',
+    'thread-stream',
+    'pino-elasticsearch',
+    'sonic-boom'
+  ],
+}
 
-export default nextConfig;
+export default nextConfig

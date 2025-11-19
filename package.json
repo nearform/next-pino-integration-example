@@ -2,6 +2,7 @@
   "name": "next16-pino-integration",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,6 +11,8 @@
   },
   "dependencies": {
     "next": "16.0.3",
+    "next-logger": "^5.0.2",
+    "pino": "^10.1.0",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },
