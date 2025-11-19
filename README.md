@@ -1,36 +1,102 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Next.js + Pino integration (example)
 
-## Getting Started
+This repository demonstrates a safe way to integrate Pino with a Next.js app using `next-logger`, while avoiding Turbopack build-time analysis of problematic transitive files (for example, `thread-stream` test files shipped in some packages).
 
-First, run the development server:
+What's included
+- A minimal Next.js app using the App Router
+- Example `instrumentation.ts` that registers `pino` + `next-logger` only on the Node server runtime
+- `next.config.ts` configured to keep Pino and known transitive packages external to the server bundle
+
+Why this is necessary
+- Some npm packages include test fixtures or non-JavaScript files that Turbopack tries to statically parse. That can cause build or start failures.
+- Marking these packages as server externals lets Node require them at runtime instead of the bundler processing their sources.
+
+Quick start
+
+- Clone the repo and install:
+
+```bash
+npm install
+```
+
+- Run development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- Build and run production locally:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run build
+npm run start
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+TypeScript notes
+- If you use TypeScript and `next-logger` doesn't provide types, add a declaration file (for example `global.d.ts` or `types/next-logger.d.ts`) with:
 
-## Learn More
+```ts
+declare module 'next-logger'
+```
 
-To learn more about Next.js, take a look at the following resources:
+Configuration
+- Example `next.config.ts` (this repo already contains a working example):
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```ts
+import type { NextConfig } from 'next'
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+const nextConfig: NextConfig = {
+  // Keep server-only packages external so Turbopack doesn't analyze their sources
+  serverExternalPackages: [
+    'pino',
+    'thread-stream',
+    'pino-elasticsearch',
+    'sonic-boom'
+  ],
+}
 
-## Deploy on Vercel
+export default nextConfig
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Instrumentation hook
+- Add `instrumentation.ts` at the project root (or `src/`) and register this hook with Next's instrumentation loader. The hook should only run on the Node server runtime.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Example (safe runtime import):
+
+```ts
+export async function register() {
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      // Use a runtime import to avoid Turbopack static analysis
+      const dynamicImport = new Function('s', 'return import(s)')
+      await dynamicImport('pino')
+      await dynamicImport('next-logger')
+    } catch (err) {
+      // If instrumentation fails to load, log and continue — don't crash the server
+      console.error('instrumentation.register: failed to load instrumentation modules', err)
+    }
+  }
+}
+```
+
+Troubleshooting
+- Symptom: `next build` or `next start` fails with parse errors pointing at `node_modules/<package>/test/*` or unknown module type errors.
+  - Cause: Turbopack attempted to statically analyze files inside a dependency that are not intended for runtime.
+  - Fix: mark the package(s) as server externals via `serverExternalPackages` in `next.config.ts`, or ensure the instrumentation module is loaded only at runtime (see the `instrumentation.ts` approach above).
+
+- Symptom: `Cannot find module as expression is too dynamic` when using overly-dynamic import expressions.
+  - Cause: Next's module loader may reject overly-dynamic module expressions during module resolution.
+  - Fix: use a try/catch around the runtime `new Function('s','return import(s)')` approach, or prefer a small server-only CommonJS wrapper that uses `require()`.
+
+Recommendations
+- For reliability in production, consider adding a small server-only CommonJS wrapper that performs `require('pino')` under a try/catch — this avoids bundler rules and dynamic-import restrictions.
+- Keep the `serverExternalPackages` list minimal and only add packages that actually cause issues during build or start.
+
+Example output
+When `next-logger` is active, server console output is converted into JSON lines suitable for structured logging systems:
+
+``` json
+{"level":30,"time":1763577811389,"pid":15460,"hostname":"exampleHost","name":"console","msg":"Example console.log() message"}
+{"level":40,"time":1763577811389,"pid":15460,"hostname":"exampleHost","name":"console","msg":"Example console.warn() message"}
+{"level":50,"time":1763577811389,"pid":15460,"hostname":"exampleHost","name":"console","msg":"Example console.error() message"}
+```
